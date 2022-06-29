@@ -1,0 +1,203 @@
+---
+title: "Student Grade Prediction"
+author: "Prathap Reddy Vasampalli"
+date: "29/06/2022"
+output: 
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#install.packages("klaR")
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(reshape2)
+library(caret)
+#library(klaR)
+library(ROCR)
+library(boot)
+```
+
+## Summary
+
+With the open education systems globally, there is the flexibility for students to study anything of their choice as content is readily and widely available. However, the students may become complacent with this freedom. In return, it makes it difficult for teachers and the teaching staff to predict the students' performance in advance. For this problem, this project has attempted to develop a prediction system using machine learning algorithms in R to help predict the student's grade in advance for proper study planning. The main objective of this project is to develop an algorithmic model that will provide students and teachers with the functionality of predicting an individual student's grades using the final grade as the target variable. The project implements a linear regression model as a predictive model for the student's grades. With the prediction of students' grades, it will be easier for teachers to identify students who need assistance, which will help improve the students' performance. The project is implemented in RStudio and developed using the R programming language.
+
+
+## Introduction
+
+The student's performance in the present educational system seems to gradually worsen daily. However, to ensure the teachers and students can improve their performance and keep track of the student's progress, it is a good practice to predict the student's performance in advance. Therefore, this paper's main focus is to discuss how this can be achieved. The paper implements a linear regression model that will help in student grade prediction to help students know their performance in advance and ensure they plan accordingly and improve on the areas of their weakness.
+
+
+## Literature Review
+
+In a study by Iqbal et al. (2017), the researcher implemented Collaborative Filtering, Restricted Boltzmann Machine, and Matrix Factorization techniques to predict the student's grades for several courses. From their analysis, it was clear to them that the Restricted Boltzmann Machines was the best technique for the prediction compared to Matrix factorization and Collaborative filtering since it is the minimum Root Mean Squared value. In another study by Nabil et al. (2021), a predictive model for predicting students' final grades was developed. From the eleven machine learning algorithms they had implemented in their study, the authors identified Decision Tree Classifier as the most suitable for students' grades as it had the highest accuracy of 88% compared to the other algorithms developed. In the study by Abana (2019), the authors implemented three different models to predict students' grade performance. The authors also implemented cross-validation to validate the performance of the predictive models. Of the three algorithms, Random Forest was the best as it had an accuracy of 75%, which was higher than that of the other algorithms. However, the authors proposed that more samples must be added to improve the accuracy of the predictive model (Abana, 2019).
+
+## Data
+
+The data has been retrieved from https://archive.ics.uci.edu/ml/machine-learning-databases/00320/student.zip. It consists of: 
+
+```{r echo=FALSE}
+student_perf <- read.csv('student-mat.csv',header = TRUE, sep = ';')
+head(student_perf)
+
+```
+
+View the structure of the data. 
+
+```{r}
+str(student_perf)
+```
+Check for any missing values in the dataset. There are no missing values in the dataset. 
+```{r}
+sapply(student_perf,function(x) sum(is.na(x)))
+```
+```{r}
+normalize <- function(x){
+  return ( (x- min(x)) / ( max(x) - min(x)))
+}
+
+# normalizing data
+cols <- c('age','Medu','Fedu','traveltime','studytime','failures','famrel','freetime','goout','Dalc','Walc','health','absences','G1','G2')
+student_perf[cols] <- lapply(student_perf[cols], normalize)
+```
+
+## Methodology
+
+Since the data is clean, we perform exploratory analysis and then build the linear regression model in this section. First, we need to understand the distribution of G3,Final grade, which is the target variable for this project by creating a histogram.
+
+```{r}
+hist(student_perf$G3)
+```
+
+Next, using a boxplot, we check the distribution of G1, first period exam, G2, second period exam, and G3, final exam. 
+```{r}
+Exams_Grades <- gather(student_perf,key = grade,value = score, G1,G2,G3)
+
+ggplot(Exams_Grades, aes(x=grade, y=score, fill=grade)) + geom_boxplot() +
+  stat_summary(fun.y = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..),
+               width = .75, linetype = "dashed")
+```
+
+Next, we visualize the relationship between the predictor variable G3 and G1 using a scatter plot. 
+
+```{r}
+ggplot(student_perf,aes(x=G1,y=G3)) +
+  geom_point() + geom_smooth(method = 'lm')
+```
+
+Next, we visualize the relationship between the predictor variable G3 and G2 using a scatter plot. 
+
+```{r}
+ggplot(student_perf,aes(x=G2,y=G3)) +
+  geom_point() + geom_smooth(method = 'lm')
+```
+
+Analysis on the student performance and the aim to pursue higher education. 
+
+```{r}
+student_perf$final <- factor(ifelse(student_perf$G3 >= 10, 1, 0), labels = c("fail", "pass"))
+edu_high <- dcast(unique(student_perf), formula = higher ~ final, fun.aggregate = length)
+edu_high <- gather(edu_high, type, count, fail,pass)
+edu_high
+```
+```{r}
+ggplot(student_perf, aes(x=higher, group=final,fill=final)) + geom_bar()
+```
+
+Next, we split data to train and test in the ratio 80:20 respectively.
+
+```{r}
+set.seed(123)
+
+train_split <- createDataPartition(y = student_perf$final, p = 0.8, list = FALSE)
+
+train <- student_perf[train_split,]
+test <- student_perf[-train_split,]
+
+
+
+# Check the dimension train and test sets
+dim(train)
+```
+We need to find the most important predictor variables to build the model. Therefore we perform feature selection through stepwise regression. Final and G3 are the most important predictor variables for students' grades. 
+
+```{r}
+options(warn = -1)
+# model with intercept only
+mod1 <- glm(final ~ 1 , data= train,family=binomial) 
+
+
+#  all predictor variables model
+mod2 <- glm(final ~ . , data= train,family=binomial)
+
+#step-wise algorithm
+Mod_stepW <- step(mod1, scope = list(lower = mod1, upper = mod2), direction = "both", trace = 0, steps = 1000)  
+
+# shortlisted variables
+formula(Mod_stepW)
+```
+```{r}
+options(warn = -1)
+set.seed(1337)
+
+# 10-fold cross validation
+train_ctrl <- trainControl(method="cv", number=10)
+
+# use glm to Train the model 
+model <- train(formula(Mod_stepW), data = train, method = "glm",trControl=train_ctrl,family = binomial)
+
+# summary of the model
+summary(model)
+```
+
+## Results
+The scatter plot for the distribution of G3 and G2 illustrates that there is a strong linear relationship exists between variables G1 and G3. This is because, with an increase in the values for the variable G3, the variables for G1 also increase.  
+```{r echo=FALSE}
+ggplot(student_perf,aes(x=G1,y=G3)) +
+  geom_point() + geom_smooth(method = 'lm')
+```
+
+In addition, the scatter plot for the distribution of G3 and G2 illustrate that there is a strong linear relationship that exist between variables G2 and G3.This is because, with increase in the values for the variable G3 the variables for G2 also increases.
+
+```{r echo=FALSE}
+ggplot(student_perf,aes(x=G1,y=G3)) +
+  geom_point() + geom_smooth(method = 'lm')
+```
+
+The stacked barchart also illustrate that those students who plan to pursue higher education are more likely to pass unlike the students who do not have any plans of pursuing higher education. 
+
+```{r echo=FALSE}
+ggplot(student_perf, aes(x=higher, group=final,fill=final)) + geom_bar()
+```
+
+The logistic regression model having been created, it has an accuracy of 92% of predicting the students grades performance. 
+
+```{r echo=FALSE}
+glm.probs <- predict(model, newdata = test, type = "raw") 
+confusionMatrix(table(glm.probs, test$final), positive = "pass") 
+```
+Lastly, final and grade are the main variables to consider in predicting grades for students. 
+
+```{r echo=FALSE}
+Mod_stepW
+```
+## Implications
+
+This project only created one model that could be used to predict students' grades performance. This might not give a real solution, and therefore for future works, and implementation of different machine learning models should be considered to identify the most suitable model for students' grades prediction. 
+
+
+## Conclusion
+
+This paper has achieved the objective of developing a logistic regression classifier to predict the students' grades. The project involved importing data into RStudio, cleaning data by checking missing values and duplicates and normalizing the values of the columns to a similar scale.  
+
+## References
+
+Abana, E. C. (2019). A decision tree approach for predicting student grades in Research Project using Weka. International Journal of Advanced Computer Science and Applications, 10(7).
+
+Iqbal, Z., Qadir, J., Mian, A. N., & Kamiran, F. (2017). Machine learning based student grade prediction: A case study. arXiv preprint arXiv:1708.08744.
+
+Nabil, A., Seyam, M., & Abou-Elfetouh, A. (2021). Prediction of students’ academic performance based on courses’ grades using deep neural networks. IEEE Access, 9, 140731-140746.
+ 
+
